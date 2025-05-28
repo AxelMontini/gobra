@@ -1,0 +1,38 @@
+package atomic
+
+pred ObsNot(x *int32, v int32)
+pred Obs(x *int32, v int32)
+pred Change(x *int32, from int32, to int32)
+pred Atomic(x *int32)
+
+ghost
+requires acc(x)
+ensures Atomic(x)
+decreases
+func Atomize(x *int32)
+
+requires acc(Atomic(addr), _)
+ensures acc(Atomic(addr), _)
+ensures swapped ==> Obs(addr, vold) && Change(addr, vold, vnew)
+ensures !swapped ==> ObsNot(addr, vold)
+decreases
+func CompareAndSwapInt32(addr *int32, vold int32, vnew int32) (swapped bool)
+
+requires acc(Atomic(addr), _)
+ensures acc(Atomic(addr), _)
+ensures Obs(addr, vnew) && Change(addr, vnew - delta, vnew)
+decreases
+func AddInt32(addr *int32, delta int32) (vnew int32)
+
+requires acc(Atomic(addr), _)
+ensures acc(Atomic(addr), _)
+ensures Obs(addr, vnew)
+decreases
+func StoreInt32(addr *int32, vnew int32)
+
+requires acc(Atomic(addr), _)
+ensures acc(Atomic(addr), _)
+ensures Obs(addr, val)
+decreases
+func LoadInt32(addr *int32) (val int32)
+
