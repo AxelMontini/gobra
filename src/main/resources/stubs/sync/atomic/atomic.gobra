@@ -1,61 +1,199 @@
+// Demo of how to specify atomic pointers in Gobra.
+// Compared to other specifications, which treat atomic pointers
+// as regular pointers, this one does not require reasoning about atomicity
+// at a logical level on the client side. This is beneficial, given that the logic of Gobra
+// is very limited for resoning about atomicity.
+// This is an experiment; there might be mistakes.
+
 package atomic
 
-// Marker predicate, tells that the given ptr is used as an atomic value
-pred Atomic(x *int32)
+/***** Reusable library *****/
 
-// Retrieve the atomic's invariant
-ghost
-requires acc(Atomic(x), _)
-decreases _
-pure func Inv(x *int32) pred()
+// The following definitions should be provided in a library.
+// These definitions are opaque and the lemmas are not
+// proven, so it is crucial that users cannot modify these specs.
 
-// Make the pointer atomic and set the invariant
-ghost
-requires acc(x)
-ensures Atomic(x)
-decreases
-func Atomize(x *int32)
-
-// Represents the latest observed value of an atomic
-ghost
-requires acc(Atomic(x), _)
-decreases
-pure func Obs(x *int32) int32
-
-type CasOp struct {
-  from, to int32
+// Atomic pointers are associated with invariants, which correspond
+// to arbitrary (IDF) predicates that restrict the values that may
+// be stored in the pointer.
+type InvariantInt32 interface {
+	pred Valid(v int32)
 }
 
-// Represents a successful CompareAndSwap
+// IsAtomic(x, inv) serves as evidence that pointer x can only be
+// accessed through atomic operations, and that any value stored
+// in the pointer satisfies the invariant inv.
+pred IsAtomic(x *int32, inv InvariantInt32)
+
+// Our API ensures that atomic pointers are registered with
+// non-nil invariants.
 ghost
-requires acc(Atomic(x), _)
+requires IsAtomic(x, inv)
+ensures  inv != nil
 decreases
-pure func Change(x *int32) CasOp
+pure func AtomicInvNotNil(x *int32, inv InvariantInt32) struct{}
 
-// represents a change in the atomic's value
+// ToAtomic(x, inv) takes a pointer x not yet marked as an atomic
+// pointer, and marks it as such, thus preventing any further
+// accesses that do not go through atomic operations. In addition,
+// it establishes inv as the invariant of x.
 ghost
-requires acc(Atomic(x), _)
+requires acc(x)
+requires inv != nil && inv.Valid(*x)
+ensures  IsAtomic(x, inv)
 decreases
-pure func Set(x *int32) int32
+func ToAtomic(x *int32, inv InvariantInt32)
 
-requires acc(Atomic(addr), _)
-ensures Atomic(addr) && (swapped ==> Obs(addr) == vnew && Change(addr) == CasOp{vold, vnew})
+// CompareAndSwapInt32(addr, vold, vnew, p) performs a CAS in an atomic
+// pointer addr from vold to vnew. This operation takes an additional ghost
+// parameter p that (1) identifies the pre (P) and postcondition (Q) of the
+// CAS operation, and (2) establishes that the precondition and post condition
+// hold in both a successful (the value in addr is originally vold) and
+// unsucessful executions (the value is not vold) of the CAS, given the
+// invariant of addr.
+requires p != nil
+requires acc(IsAtomic(addr, p.Inv()), _)
+requires p.P(vold, vnew)
+ensures  p.Q(vold, vnew, swapped)
 decreases
-func CompareAndSwapInt32(addr *int32, vold int32, vnew int32) (swapped bool)
+func CompareAndSwapInt32(addr *int32, vold int32, vnew int32, ghost p CASInt32Proof) (swapped bool)
 
-// TODO: Probably needs its own struct... Or just Obs() the new value?
-requires acc(Atomic(addr), _)
-ensures Atomic(addr) && Obs(addr) == vnew && Change(addr) == CasOp{vnew - delta, vnew}
-decreases
-func AddInt32(addr *int32, delta int32) (vnew int32)
+// Valid proofs that CAS(addr, vold, vnew) can be performed in a state
+// satisfying P(vold, vnew) to reach a state satisfying Q(vold, vnew, result), where result is
+// a bool determining whether the CAS was successful.
+type CASInt32Proof interface {
+	// Precondition
+	pred P(vold int32, vnew int32)
 
-requires acc(Atomic(addr), _)
-ensures Atomic(addr) && Obs(addr) == vnew && Set(addr) == vnew
-decreases
-func StoreInt32(addr *int32, vnew int32)
+	// Postcondition
+	pred Q(vold int32, vnew int32, swapped bool)
 
-requires acc(Atomic(addr), _)
-ensures Atomic(addr) && Obs(addr) == val
+	// Invariant of the atomic pointer
+	ghost
+	decreases
+	pure Inv() InvariantInt32
+
+	// Show that the the pre and postcondition form
+	// a valid contract when the CAS is successful.
+	ghost
+	requires P(vold, vnew)
+	requires Inv().Valid(vold)
+	ensures  Inv().Valid(vnew)
+	ensures  Q(vold, vnew, true)
+	decreases
+	ProofOfSuccess(vold int32, vnew int32)
+
+	// Show that the the pre and postcondition form
+	// a valid contract when the CAS is unsuccessful.
+	ghost
+	requires P(vold, vnew)
+	requires v != vold
+	requires Inv().Valid(v)
+	ensures  Inv().Valid(v)
+	ensures  Q(vold, vnew, false)
+	decreases
+	ProofOfFailure(v int32, vold int32, vnew int32)
+}
+
+/***** Example of a client *****/
+
+/** Client program **/
+
+// Shows an example of how an atomic int32 can be used to provide
+// exclusive access to a *bool. We can use this pattern to build a
+// simple spin lock.
+func Client() {
+	x := new(int32)
+	// location protected by x
+	b := new(bool)
+	// select the invariant for x
+	ghost atomicInv := ProofFrom0To1Inv{b}
+	// show that the invariant holds for the value
+	// currently stored in x
+	fold atomicInv.Valid(0)
+	// mark x as atomic; make atomicInv its invariant
+	ToAtomic(x, atomicInv)
+	// we want to show that we can perform a CAS in
+	// x, from 0 to 1, in order to obtain permission
+	// to b if the CAS succeeds. The precondition for
+	// the CAS is p.P(0, 1), which is defined as true.
+	// We build a proof that these specifications is valid.
+	ghost p := ProofFrom0To1 { inv: atomicInv }
+	fold p.P(0, 1)
+	res := CompareAndSwapInt32(x, 0, 1, p)
+	// we perform the CAS, thus learning the poscondition
+	// Q(0, 1, res), which provides ownserhip of b if res holds.
+	unfold p.Q(0, 1, res)
+	if res {
+		// this assert succeeds because we are in the successful
+		// branch. Without the if statment guarding this assert,
+		// Gobra would produce a verification error.
+		assert acc(b)
+	}
+}
+
+/** Client provided invariant for atomic int32 **/
+ghost type ProofFrom0To1Inv ghost struct {
+	owned *bool
+}
+
+// The invariant holds for value v iff it is either 0 or and,
+// in the case it is zero, it provides ownership to p.owned.
+pred (p ProofFrom0To1Inv) Valid(v int32) {
+	(0 <= v && v <= 1) && (v == 0 ==> acc(p.owned))
+}
+
+/** Client provided proof that the spec for the CAS used above is valid **/
+ghost type ProofFrom0To1 ghost struct {
+	inv ProofFrom0To1Inv
+}
+
+// ProofFrom0To1 is a valid behavioral subtype of CASInt32Proof.
+// Thus, it must provide all the members in its interface declaration
+// and they must have "compatible" contracts, according to behavioral
+// subtyping.
+ProofFrom0To1 implements CASInt32Proof
+
+// precondition
+pred (p ProofFrom0To1) P(vold int32, vnew int32) {
+	vold == 0 && vnew == 1
+}
+
+// postcondition
+pred (p ProofFrom0To1) Q(vold int32, vnew int32, b bool) {
+	b ==> acc(p.inv.owned)
+}
+
+// invariant of the atomic pointer
+ghost
 decreases
-func LoadInt32(addr *int32) (val int32)
+pure func (p ProofFrom0To1) Inv() InvariantInt32 {
+	return p.inv
+}
+
+// proof for the successful case
+ghost
+requires p.P(vold, vnew)
+requires p.Inv().Valid(vold)
+ensures  p.Inv().Valid(vnew)
+ensures  p.Q(vold, vnew, true)
+decreases
+func (p ProofFrom0To1) ProofOfSuccess(vold int32, vnew int32) {
+	unfold p.P(vold, vnew)
+	unfold p.Inv().Valid(vold)
+	fold p.Inv().Valid(vnew)
+	fold p.Q(vold, vnew, true)
+}
+
+// proof for the unsuccessful case
+ghost
+requires p.P(vold, vnew)
+requires p.Inv().Valid(v)
+ensures  p.Inv().Valid(v)
+ensures  p.Q(vold, vnew, false)
+decreases
+func (p ProofFrom0To1) ProofOfFailure(v int32, vold int32, vnew int32) {
+	unfold p.P(vold, vnew)
+	fold p.Q(vold, vnew, false)
+}
 
