@@ -95,6 +95,18 @@ type CASInt32Proof interface {
 	ProofOfFailure(v int32, vold int32, vnew int32)
 }
 
+// A View is created whenever an atomic value is sampled by operations other than CAS.
+// The View can then be used to reason about the value. 
+ghost type View ghost struct {}
+
+ghost
+decreases
+pure func Value(x *int32, v View) int32
+
+requires acc(IsAtomic(x, inv), _)
+ensures IsAtomic(x, inv) && res == Value(x, view) && inv.Valid(res)
+func LoadInt32(x *int32, ghost inv InvariantInt32) (res int32, ghost view View)
+
 /***** Example of a client *****/
 
 /** Client program **/
