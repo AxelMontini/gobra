@@ -95,6 +95,39 @@ type CASInt32Proof interface {
 	ProofOfFailure(v int32, vold int32, vnew int32)
 }
 
+// AddInt32 
+requires p != nil
+requires acc(IsAtomic(addr, p.Inv()), _)
+requires p.P(delta)
+ensures  p.Q(delta, res)
+decreases
+func AddInt32(addr *int32, delta int32, ghost p AddInt32Proof) (res int32)
+
+// A proof that `res := AddInt32(addr, delta)` can be performed, and that the postcondition `Q` is satisfied
+// if precondition `P` is.
+type AddInt32Proof interface {
+	// Precondition
+	pred P(delta int32)
+
+	// Postcondition
+	pred Q(delta int32, res int32)
+
+	// Invariant of the atomic pointer
+	ghost
+	decreases
+	pure Inv() InvariantInt32
+
+	// Show that the the pre and postcondition form
+	// a valid contract when the atomic addition is performed.
+	ghost
+	requires P(delta)
+	requires Inv().Valid(res - delta)
+	ensures  Inv().Valid(res)
+	ensures  Q(delta, res)
+	decreases
+	Proof(delta int32, res int32)
+}
+
 // A View is created whenever an atomic value is sampled by operations other than CAS.
 // The View can then be used to reason about the value. 
 ghost type View ghost struct {}
