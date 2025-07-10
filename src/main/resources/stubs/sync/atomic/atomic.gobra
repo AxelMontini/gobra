@@ -98,7 +98,7 @@ type CASInt32Proof interface {
 // AddInt32 
 requires p != nil
 requires acc(IsAtomic(addr, p.Inv()), _)
-requires p.P(delta)
+requires p.P(delta, res)
 ensures  p.Q(delta, res)
 decreases
 func AddInt32(addr *int32, delta int32, ghost p AddInt32Proof) (res int32)
@@ -107,7 +107,7 @@ func AddInt32(addr *int32, delta int32, ghost p AddInt32Proof) (res int32)
 // if precondition `P` is.
 type AddInt32Proof interface {
 	// Precondition
-	pred P(delta int32)
+	pred P(delta int32, res int32)
 
 	// Postcondition
 	pred Q(delta int32, res int32)
@@ -120,7 +120,7 @@ type AddInt32Proof interface {
 	// Show that the the pre and postcondition form
 	// a valid contract when the atomic addition is performed.
 	ghost
-	requires P(delta)
+	requires P(delta, res)
 	requires Inv().Valid(res - delta)
 	ensures  Inv().Valid(res)
 	ensures  Q(delta, res)
@@ -138,6 +138,7 @@ pure func Value(x *int32, v View) int32
 
 requires acc(IsAtomic(x, inv), _)
 ensures IsAtomic(x, inv) && res == Value(x, view) && inv.Valid(res)
+decreases
 func LoadInt32(x *int32, ghost inv InvariantInt32) (res int32, ghost view View)
 
 /***** Example of a client *****/
