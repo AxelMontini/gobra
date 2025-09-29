@@ -128,18 +128,30 @@ type AddInt32Proof interface {
 	Proof(delta int32, res int32)
 }
 
-// A View is created whenever an atomic value is sampled by operations other than CAS.
-// The View can then be used to reason about the value. 
-ghost type View ghost struct {}
-
-ghost
+requires p != nil
+requires acc(IsAtomic(x, p.Inv()), _)
+requires p.P()
+ensures p.Q(v)
+ensures IsAtomic(x, p.Inv())
 decreases
-pure func Value(x *int32, v View) int32
+func LoadInt32(x *int32, ghost p LoadInt32Proof) (v int32)
 
-requires acc(IsAtomic(x, inv), _)
-ensures IsAtomic(x, inv) && res == Value(x, view) && inv.Valid(res)
-decreases
-func LoadInt32(x *int32, ghost inv InvariantInt32) (res int32, ghost view View)
+type LoadInt32Proof interface {
+	pred P()
+
+	pred Q(v int32)
+
+	ghost
+	decreases
+	pure Inv() InvariantInt32
+
+	ghost
+	preserves Inv().Valid(v)
+	requires P()
+	ensures Q(v)
+	decreases
+	Proof(v int32)	
+}
 
 /***** Example of a client *****/
 
